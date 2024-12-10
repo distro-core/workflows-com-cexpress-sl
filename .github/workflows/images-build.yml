@@ -1,0 +1,94 @@
+name: Images Build
+
+run-name: Images Build (${{ inputs.DISTRO_CODENAME }})
+
+# This workflow represents a specific configuration for a
+# single MACHINE as a specific design goal. It utilizes a
+# reusable workflow found at distro-core/distro-manifest.
+
+# Requires
+# secrets.AWS_ACCESS_KEY_ID                 S3 Access Key
+# secrets.AWS_SECRET_ACCESS_KEY             S3 Secret Key
+# secrets.AWS_ENDPOINT_URL                  S3 Endpoint Hostname
+
+# Self hosted runners have the prerequsite dependency to install the
+# host tools dependencies before pipeline use. Utilize script found
+# at distro-core/distro-manifest/scripts/setup-host-deps.sh
+
+on:
+  workflow_dispatch:
+    inputs:
+      DISTRO_CODENAME:
+        required: true
+        type: choice
+        default: scarthgap
+        options:
+          - kirkstone
+          - scarthgap
+      DISTROS:
+        required: true
+        type: choice
+        default: scarthgap
+        options:
+          - distro-core
+          - distro-core-gui
+          - distro-musl
+          - distro-musl-gui
+      TARGETS:
+        required: true
+        type: string
+        default: distro-image
+
+permissions:
+  actions: write
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+
+  # get-runner-name selects a self-hosted runner which has a label
+  # that matches its name. The setup has to be performed when the
+  # runner is initially created.
+
+  get-runner-name:
+    runs-on: self-hosted
+    outputs:
+     established-runner: ${{ runner.name }}
+    steps:
+      - run: echo "selected runner = ${{ runner.name }}"
+
+  fetch-distro:
+    needs: get-runner-name
+    uses: distro-core/distro-manifest/.github/workflows/images-fetch.yml@main
+    with:
+      established-runner: ${{ needs.get-runner-name.outputs.established-runner }}
+      DISTRO_CODENAME: ${{ inputs.DISTRO_CODENAME }}
+      DISTROS: ${{ inputs.DISTROS }}
+      MACHINES: com-cexpress-sl
+      TARGETS: ${{ inputs.TARGETS }}
+      MANIFEST_URI: https://github.com/distro-core/distro-manifest.git
+      MANIFEST_BRANCH: main
+    secrets:
+      AWS_ENDPOINT_URL: ${{ secrets.AWS_ENDPOINT_URL }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+  build-distro:
+    if: true
+    needs: [ get-runner-name, fetch-distro ]
+    uses: distro-core/distro-manifest/.github/workflows/images-build.yml@main
+    with:
+      established-runner: ${{ needs.get-runner-name.outputs.established-runner }}
+      DISTRO_CODENAME: ${{ inputs.DISTRO_CODENAME }}
+      DISTROS: ${{ inputs.DISTROS }}
+      MACHINES: com-cexpress-sl
+      TARGETS: ${{ inputs.TARGETS }}
+      MANIFEST_URI: https://github.com/distro-core/distro-manifest.git
+      MANIFEST_BRANCH: main
+    secrets:
+      AWS_ENDPOINT_URL: ${{ secrets.AWS_ENDPOINT_URL }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
