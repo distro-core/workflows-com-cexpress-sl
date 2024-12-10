@@ -1,0 +1,169 @@
+name: Dispatch Images Build
+
+# This workflow represents a specific configuration for a
+# single MACHINE as a specific design goal. It utilizes a
+# reusable workflow found at distro-core/distro-manifest.
+
+# Variables and Actions
+# secrets.AWS_ACCESS_KEY_ID                 Reusable Workflow, S3 Access Key
+# secrets.AWS_SECRET_ACCESS_KEY             Reusable Workflow, S3 Secret Key
+# secrets.AWS_ENDPOINT_URL                  Reusable Workflow, S3 Endpoint Hostname
+# liskin/gh-workflow-keepalive              Action, Keepalive
+
+# Self hosted runners have the prerequsite dependency to
+# install the host tools dependencies before workflow use.
+
+on:
+  # schedule:
+  #   - cron: '00 7 * * *'
+  workflow_dispatch:
+    inputs:
+      DISTRO:
+        description: Select DISTRO
+        required: true
+        type: choice
+        default: distro-core
+        options:
+        - distro-core
+        - distro-core-no-gui
+      TARGETS:
+        description: Select Target
+        required: true
+        type: choice
+        default: distro-image
+        options:
+        - distro-image
+        - distro-sdk-image
+
+# cancel previous workflow runs to avoid concurrency issues
+
+concurrency:
+  group: images-build-${{ github.ref_name }}
+  cancel-in-progress: true
+
+# workflow permissions for current repository
+
+permissions:
+  actions: write
+  contents: write
+
+# default shell for all jobs
+
+defaults:
+  run:
+    shell: bash
+
+########################################################################
+
+env:
+  GIT_CONFIG_GLOBAL: ${{ github.workspace }}/.gitconfig
+  GNUPGHOME: ${{ github.workspace }}/.gnupg
+
+jobs:
+
+  # runner-name selects a self-hosted runner and returns its name
+
+  runner-name:
+    uses: distro-core/distro-manifest/.github/workflows/runner-name.yml@main
+
+  # keep-alive prevents the workflow from being disabled due to any
+  # github repository inactivity.
+
+  keep-alive:
+    needs: [ runner-name ]
+    runs-on: ${{ needs.runner-name.outputs.runner-name }}
+    steps:
+    - uses: liskin/gh-workflow-keepalive@v1.2.1
+
+  # contexts reports in the summary log contents of contexts
+
+  contexts:
+    needs: [ runner-name ]
+    uses: distro-core/distro-manifest/.github/workflows/images-contexts.yml@main
+    with:
+      runner-name: ${{ needs.runner-name.outputs.runner-name }}
+
+  # remove the workspace contents; self-hosted runners retain the
+  # workspace contents between jobs.
+
+  pre-cleanup:
+    needs: [ runner-name ]
+    uses: distro-core/distro-manifest/.github/workflows/images-cleanup.yml@main
+    with:
+      runner-name: ${{ needs.runner-name.outputs.runner-name }}
+      DISTRO: ${{ inputs.DISTRO }}
+      DL_DIR: ${{ needs.runner-name.outputs.mnt-dl-dir }}
+      SSTATE_DIR: ${{ needs.runner-name.outputs.mnt-sstate-dir }}
+
+  # repo init, sync and manifest; the job creates the workspace
+  # contents and the .repo directory that are referenced in later
+  # jobs.
+
+  repo-init:
+    needs: [ runner-name, pre-cleanup ]
+    uses: distro-core/distro-manifest/.github/workflows/images-repo-init-sync.yml@main
+    with:
+      runner-name: ${{ needs.runner-name.outputs.runner-name }}
+      MANIFEST_URL: https://github.com/distro-core/distro-manifest.git
+      MANIFEST_NAME: distro-head-scarthgap.xml
+      MANIFEST_REF: main
+
+  # build steps to create artifacts.
+
+  build:
+    needs: [ runner-name, repo-init ]
+    uses: distro-core/distro-manifest/.github/workflows/images-build.yml@main
+    with:
+      runner-name: ${{ needs.runner-name.outputs.runner-name }}
+      timeout-minutes: 960
+      DISTRO: ${{ inputs.DISTRO }}
+      MACHINE: com-cexpress-sl
+      TARGETS_FETCH:
+      TARGETS_CLEAN:
+      TARGETS_BEFORE:
+      TARGETS: ${{ inputs.TARGETS }}
+      TARGET_FLAGS:
+      MANIFEST_COMMIT_ID: ${{ needs.repo-init.outputs.manifest_sha }}
+      DL_DIR: ${{ needs.runner-name.outputs.mnt-dl-dir }}
+      SSTATE_DIR: ${{ needs.runner-name.outputs.mnt-sstate-dir }}
+
+  # deploy steps to save artifacts.
+
+  # deploy-mnt:
+  #   needs: [ runner-name, repo-init, build ]
+  #   uses: distro-core/distro-manifest/.github/workflows/images-deploy-mnt.yml@main
+  #   with:
+  #     runner-name: ${{ needs.runner-name.outputs.runner-name }}
+  #     timeout-minutes: 360
+  #     DISTRO: ${{ inputs.DISTRO }}
+  #     MACHINE: com-cexpress-sl
+  #     DL_DIR: ${{ needs.runner-name.outputs.mnt-dl-dir }}
+  #     SSTATE_DIR: ${{ needs.runner-name.outputs.mnt-sstate-dir }}
+
+  # deploy-buckets:
+  #   needs: [ runner-name, repo-init, build ]
+  #   uses: distro-core/distro-manifest/.github/workflows/images-deploy-buckets.yml@main
+  #   with:
+  #     runner-name: ${{ needs.runner-name.outputs.runner-name }}
+  #     timeout-minutes: 360
+  #     DISTRO: ${{ inputs.DISTRO }}
+  #     MACHINE: com-cexpress-sl
+  #     DL_DIR: ${{ needs.runner-name.outputs.mnt-dl-dir }}
+  #     SSTATE_DIR: ${{ needs.runner-name.outputs.mnt-sstate-dir }}
+  #   secrets:
+  #     AWS_ENDPOINT_URL: ${{ secrets.AWS_ENDPOINT_URL }}
+  #     AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  #     AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+  # remove the workspace contents; self-hosted runners retain the
+  # workspace contents between jobs.
+
+  post-cleanup:
+    needs: [ runner-name, build ]
+    if: always()
+    uses: distro-core/distro-manifest/.github/workflows/images-cleanup.yml@main
+    with:
+      runner-name: ${{ needs.runner-name.outputs.runner-name }}
+      DISTRO: ${{ inputs.DISTRO }}
+      DL_DIR: ${{ needs.runner-name.outputs.mnt-dl-dir }}
+      SSTATE_DIR: ${{ needs.runner-name.outputs.mnt-sstate-dir }}
