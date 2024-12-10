@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: MIT
+
+name: Close Pull Request
+
+# This workflow closes a pull request automatically when opened.
+
+on:
+  pull_request_target:
+    types:
+    - opened
+
+########################################################################
+
+jobs:
+
+  Run:
+    runs-on: ubuntu-latest
+    steps:
+
+    # automatically closes the pull request with a comment.
+
+    - uses: superbrothers/close-pull-request@v3
+      with:
+        # Optional. Post a issue comment just before closing a pull request.
+        comment: "We do not accept PRs. If you have any questions, please feel free to contact us."
