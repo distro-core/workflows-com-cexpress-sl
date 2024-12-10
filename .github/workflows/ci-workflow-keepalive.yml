@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: MIT
+
+name: Keep Workflow Enabled
+run-name: ${{ github.workflow }} ${{ github.event_name }} on ${{ github.ref_name && github.ref_name || github.ref }}
+
+# This workflow is an example of running a workflow on a GitHub Hosted
+# runner. It performs the nominal process of running a build process
+# with only syntax checking. The workflow utilizes shared workflow
+# actions from the common library.
+
+# Secrets
+# secrets.ACTIONS_STEP_DEBUG                Repository
+
+# Self hosted runners have the prerequsite dependency to install the
+# host tools dependencies before workflow use.
+
+on:
+  workflow_run:
+    workflows:
+      - Cloud Build
+      - Cloud Fetch
+      - Cloud Parse
+      - Runner Build
+      - Runner Fetch
+    types:
+      - completed
+
+# Workflow permissions for current repository; use the principal of
+# assigning the least necessary permissions required.
+
+permissions:
+  actions: write
+  contents: read
+
+########################################################################
+
+# Workflow environment initial state. The environment is utilized to
+# setup values used by job steps.
+
+# env:
+#   _PLACE_HOLDER_KEY: _PLACE_HOLDER_VALUE
+
+########################################################################
+
+jobs:
+
+  Run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+
+    # GitHub actions github-script
+    # https://github.com/actions/github-script
+
+    - name: Context dump for diagnostics
+      if: true
+      uses: actions/github-script@v7
+      with:
+        script: |
+          console.log(`"github":\n${JSON.stringify(github, null, 2)}`);
+          console.log(`"context":\n${JSON.stringify(context, null, 2)}`);
+
+    - name: Get current workflow id
+      if: github.event.workflow_run
+      id: get_workflow_id
+      uses: actions/github-script@v7
+      with:
+        script: |
+          return { workflow_id: context.payload.workflow_run.workflow_id };
+
+    - name: Enable workflow with id or name
+      if: github.event.workflow_run
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const workflowId = '${{ steps.get_workflow_id.outputs.result.workflow_id }}';
+
+          try {
+            await github.rest.actions.enableWorkflow({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: workflowId,
+            });
+            console.log(`Enabled workflow: ${workflowId}`);
+          } catch (error) {
+            console.error(`Failed to enable workflow: ${workflowId}`, error);
+          }
