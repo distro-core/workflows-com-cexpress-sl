@@ -1,0 +1,178 @@
+# SPDX-License-Identifier: MIT
+
+name: Cloud Fetch
+run-name: ${{ github.workflow }} ${{ github.event_name }} on ${{ github.ref_name && github.ref_name || github.ref }}
+
+# This workflow represents a specific configuration for a
+# single MACHINE as a specific design goal. It utilizes a
+# reusable workflow found at distro-core.
+
+# Secrets
+# secrets.ACTIONS_STEP_DEBUG                Repository
+# secrets.AWS_ACCESS_KEY_ID                 Organization, S3 Access Key
+# secrets.AWS_SECRET_ACCESS_KEY             Organization, S3 Secret Key
+# secrets.AWS_ENDPOINT_URL                  Organization, S3 Endpoint Hostname
+
+# Self hosted runners have the prerequsite dependency to install the
+# host tools dependencies before workflow use.
+
+on:
+  # push:
+  #   branches:
+  #   - main
+  #   - release
+  #   - development
+  workflow_dispatch:
+    inputs:
+      chosen_os:
+        description: Select OS
+        type: choice
+        default: ubuntu-22.04
+        options:
+        - linux-amd64
+        - ubuntu-22.04
+      EXTRA_USER_CLASSES:
+        description: >-
+          USER_CLASSES:prepend
+        type: choice
+        default: none
+        options:
+        - none
+        - cve-check
+
+# Workflow concurrency for current repository; allows GitHub to cancel
+# other workflow in progres when identified by the group key.
+
+concurrency:
+  group: ${{ github.workflow_ref }}
+  cancel-in-progress: ${{ !contains(github.ref, 'no-cancel-branch/') }}
+
+# Workflow permissions for current repository; use the principal of
+# assigning the least necessary permissions required.
+
+permissions:
+  actions: write
+  contents: read
+
+########################################################################
+
+# Workflow environment initial state. The environment is utilized to
+# setup values used by job steps.
+
+# DISTRO:
+#   required: true
+#   description: >-
+#     bitbake variable DISTRO
+#     https://docs.yoctoproject.org/ref-manual/variables.html#term-DISTRO
+# DISTRO_CODENAME:
+#   required: true
+#   description: >-
+#     bitbake variable DISTRO_CODENAME
+#     https://docs.yoctoproject.org/ref-manual/variables.html#term-DISTRO_CODENAME
+# MACHINE:
+#   required: true
+#   description: >-
+#     bitbake variable MACHINE
+#     https://docs.yoctoproject.org/ref-manual/variables.html#term-MACHINE
+# TARGETS:
+#   required: true
+#   description: >-
+#     bitbake command line targets_list
+# EXTRA_PREMIRRORS:
+#   required: false
+#   description: >-
+#     bitbake variable PREMIRRORS:prepend
+#     https://docs.yoctoproject.org/ref-manual/variables.html#term-PREMIRRORS
+# EXTRA_SSTATE_MIRRORS:
+#   required: false
+#   description: >-
+#     bitbake variable SSTATE_MIRRORS:prepend
+#     https://docs.yoctoproject.org/ref-manual/variables.html#term-SSTATE_MIRRORS
+
+env:
+  ACTIONS_STEP_DEBUG: ${{ secrets.ACTIONS_STEP_DEBUG }}
+  REPO_MANIFEST_URL: https://github.com/distro-core/distro-manifest.git
+  REPO_MANIFEST_NAME: ci-${{ github.ref_name }}-head.xml
+  REPO_MANIFEST_REF: main
+  REPO_MANIFEST_LOCAL: >-
+    <extend-project name="meta-tegra" revision="scarthgap-l4t-r35.x" />
+    <extend-project name="meta-distro" revision="${{ github.ref_name }}" />
+    <extend-project name="workflows-com-cexpress-sl" revision="${{ github.ref_name }}" groups="default" />
+  MACHINE: com-cexpress-sl
+  DISTRO: distro-core
+  DISTRO_CODENAME: scarthgap
+  TARGETS: distro-image
+  TARGETS_FLAGS:
+  EXTRA_TARGETS_FLAGS: --runall=fetch
+  EXTRA_USER_CLASSES: none
+  MNT_DL_DIR:
+  MNT_SSTATE_DIR:
+  # replaces inherit own-mirrors
+  EXTRA_PREMIRRORS: >-
+    ${{ vars.EXTRA_PREMIRRORS }}
+  EXTRA_SSTATE_MIRRORS: >-
+    ${{ vars.EXTRA_SSTATE_MIRRORS }}
+
+########################################################################
+
+jobs:
+
+  Run:
+    # Runner from github-hosted values, selected for bitbake
+    runs-on: ${{ inputs.chosen_os && inputs.chosen_os || 'ubuntu-22.04' }}
+    timeout-minutes: 360
+    steps:
+
+    - name: Context dump for diagnostics
+      if: env.ACTIONS_STEP_DEBUG
+      uses: distro-core/actions/context@main
+
+    - name: Runner initialization
+      if: env.DISTRO != '' && env.MACHINE != ''
+      id: runner
+      uses: distro-core/actions/runner@main
+      with:
+        mnt_dl_dir: ${{ env.MNT_DL_DIR }}
+        mnt_sstate_dir: ${{ env.MNT_SSTATE_DIR }}
+
+    # - name: Checkout repository
+    #   uses: actions/checkout@v4
+
+    # repo init, sync and manifest; the job creates the workspace
+    # contents and the .repo directory that are referenced in later.
+    # environment variables are set for the manifest and the repo.
+
+    - id: repo-manifest
+      uses: distro-core/actions/repo@main
+
+    # restore caches.
+
+    - id: restore-build-downloads
+      uses: actions/cache/restore@v4
+      with:
+        key: build-downloads
+        path: |
+          build/downloads
+
+    # build steps to create artifacts.
+
+    # - id: bitbake-sdk
+    #   uses: distro-core/actions/bitbake@main
+
+    - id: bitbake-targets
+      uses: distro-core/actions/bitbake@main
+
+    # refresh caches.
+
+    - id: save-build-downloads
+      if: always()
+      uses: actions/cache/save@v4
+      with:
+        key: build-downloads
+        path: |
+          ${{ steps.bitbake-targets.outputs.dl_dir }}/*
+          !${{ steps.bitbake-targets.outputs.dl_dir }}/git2
+          !${{ steps.bitbake-targets.outputs.dl_dir }}/*.done
+          !${{ steps.bitbake-targets.outputs.dl_dir }}/*.lock
+          !${{ steps.bitbake-targets.outputs.dl_dir }}/*tmp
+          !${{ steps.bitbake-targets.outputs.dl_dir }}/tmp*
