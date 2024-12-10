@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: MIT
+
+name: Self Hosted Build (Scheduled)
+
+run-name: ${{ github.workflow }} for ${{ github.repository }}
+
+# This workflow represents a specific configuration for a
+# single MACHINE as a specific design goal. It utilizes a
+# reusable workflow found at distro-core.
+
+# Variables and Actions
+# secrets.AWS_ACCESS_KEY_ID                 Organization, S3 Access Key
+# secrets.AWS_SECRET_ACCESS_KEY             Organization, S3 Secret Key
+# secrets.AWS_ENDPOINT_URL                  Organization, S3 Endpoint Hostname
+# vars.DISTRO                               Organization, Bitbake DISTRO
+# vars.DISTRO_CODENAME                      Organization, Bitbake DISTRO_CODENAME
+# vars.MACHINE                              Repository, Bitbake MACHINE
+# vars.TARGETS                              Organization, Bitbake TARGETS
+
+# Self hosted runners have the prerequsite dependency to
+# install the host tools dependencies before workflow use.
+
+on:
+  # schedule:
+  #   - cron: '15 7 */7 * *'
+  # push:
+  #   branches:
+  #   - 'release/**'
+  workflow_dispatch:
+    inputs:
+      runs-on:
+        description: Select runner
+        type: choice
+        default: '["self-hosted","linux"]'
+        options:
+        - '["self-hosted","linux"]'
+        - '["self-hosted","linux","x64"]'
+        - '["self-hosted","linux","arm64"]'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !contains(github.ref, 'release/') }}
+
+# workflow permissions for current repository
+
+permissions:
+  actions: write
+  attestations: write
+  contents: write
+  id-token: write
+
+########################################################################
+
+jobs:
+
+  Run:
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 360
+    steps:
+
+    # setup runner.
+
+    - id: runner
+      uses: distro-core/distro-core-action-runner@v0
+
+    # checkout repo for workflow automation.
+
+    - id: checkout
+      uses: actions/checkout@v4
+      with:
+        clean: false
+        fetch-depth: 0
+
+    # schedule workflows.
+
+    - id: gh-cli
+      shell: bash
+      env:
+        NO_COLOR: 1
+        GH_PROMPT_DISABLED: 1
+        GH_NO_UPDATE_NOTIFIER: 1
+        GH_TOKEN: ${{ secrets.ACTIONS_GITHUB_TOKEN }}
+      run: |
+        : gh cli
+        gh workflow run self-hosted-build.yml -f runs-on='["self-hosted","linux"]'

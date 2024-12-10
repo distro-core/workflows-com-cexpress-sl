@@ -1,0 +1,151 @@
+# SPDX-License-Identifier: MIT
+
+name: Self Hosted Sync
+
+run-name: ${{ github.workflow }} for ${{ github.repository }}
+
+# This workflow represents a specific configuration for a
+# single MACHINE as a specific design goal. It utilizes a
+# reusable workflow found at distro-core.
+
+# Variables and Actions
+# secrets.ACTIONS_STEP_DEBUG                Repository
+# secrets.AWS_ACCESS_KEY_ID                 Organization, S3 Access Key
+# secrets.AWS_SECRET_ACCESS_KEY             Organization, S3 Secret Key
+# secrets.AWS_ENDPOINT_URL                  Organization, S3 Endpoint Hostname
+# vars.DISTRO                               Organization, Bitbake DISTRO
+# vars.DISTRO_CODENAME                      Organization, Bitbake DISTRO_CODENAME
+# vars.MACHINE                              Repository, Bitbake MACHINE
+# vars.TARGETS                              Organization, Bitbake TARGETS
+# vars.EXTRA_PREMIRRORS_HOST                Organization, Bitbake PREMIRRORS:prepend
+# vars.EXTRA_SSTATE_MIRRORS_HOST            Organization, Bitbake SSTATE_MIRRORS:prepend
+
+# Self hosted runners have the prerequsite dependency to
+# install the host tools dependencies before workflow use.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs-on:
+        description: Select runner
+        type: choice
+        default: '["self-hosted","linux","x64"]'
+        options:
+        - '["self-hosted","linux","x64"]'
+        - '["self-hosted","linux","arm64"]'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: ${{ !contains(github.ref, 'release/') }}
+
+# workflow permissions for current repository
+
+permissions:
+  actions: write
+  attestations: write
+  contents: write
+  id-token: write
+
+########################################################################
+
+jobs:
+
+  Run:
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 1080
+    steps:
+
+    - id: runner
+      if: vars.DISTRO != '' && vars.MACHINE != ''
+      uses: distro-core/distro-core-action-runner@main
+      with:
+        mnt_dl_dir: /mnt/downloads
+        mnt_sstate_dir: /mnt/sstate-cache
+
+    - id: keepalive
+      uses: liskin/gh-workflow-keepalive@v1.2.1
+
+    - id: context
+      uses: distro-core/distro-core-action-context@main
+
+    - id: rsync-dl-dir
+      if: steps.runner.outputs.mnt_dl_dir != ''
+      uses: distro-core/distro-core-action-rsync@main
+      with:
+        src_dir: build/${{ vars.DISTRO }}/downloads
+        dst_dir: ${{ steps.runner.outputs.mnt_dl_dir }}
+
+    - id: rsync-sstate-dir
+      if: steps.runner.outputs.mnt_sstate_dir != ''
+      uses: distro-core/distro-core-action-rsync@main
+      with:
+        src_dir: build/${{ vars.DISTRO }}/${{ vars.MACHINE }}-sstate-cache
+        dst_dir: ${{ steps.runner.outputs.mnt_sstate_dir }}
+
+    - id: s3sync-dl-dir
+      uses: distro-core/distro-core-action-s3sync@main
+      with:
+        src_dir: build/${{ vars.DISTRO }}/downloads
+        dst_dir: s3://distro-core-downloads
+        AWS_ENDPOINT_URL: ${{ secrets.AWS_ENDPOINT_URL }}
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+    - id: s3sync-sstate-dir
+      uses: distro-core/distro-core-action-s3sync@main
+      with:
+        src_dir: build/${{ vars.DISTRO }}/${{ vars.MACHINE }}-sstate-cache
+        dst_dir: s3://distro-core-sstate-cache/${{ vars.MACHINE }}
+        AWS_ENDPOINT_URL: ${{ secrets.AWS_ENDPOINT_URL }}
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+    - id: delete-build-cache
+      shell: bash
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        : delete-build-cache
+        gh cache delete build-cache || true
+
+    - id: save-build-cache
+      uses: actions/cache/save@v4
+      with:
+        key: build-cache
+        path: |
+          build/${{ vars.DISTRO }}/cache
+
+    - id: delete-build-downloads
+      shell: bash
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        : delete-build-downloads
+        gh cache delete build-downloads || true
+
+    - id: save-build-downloads
+      uses: actions/cache/save@v4
+      with:
+        key: build-downloads
+        path: |
+          build/${{ vars.DISTRO }}/downloads/*
+          !build/${{ vars.DISTRO }}/downloads/git2
+          !build/${{ vars.DISTRO }}/downloads/*.done
+          !build/${{ vars.DISTRO }}/downloads/*.lock
+          !build/${{ vars.DISTRO }}/downloads/*tmp
+          !build/${{ vars.DISTRO }}/downloads/tmp*
+
+    - id: delete-build-sstate
+      shell: bash
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        : delete-build-sstate
+        gh cache delete build-downloads || true
+
+    - id: save-build-sstate
+      uses: actions/cache/save@v4
+      with:
+        key: build-sstate
+        path: |
+          build/${{ vars.DISTRO }}/${{ vars.MACHINE }}-sstate-cache
