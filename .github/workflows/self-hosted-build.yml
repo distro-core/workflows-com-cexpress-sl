@@ -2,7 +2,7 @@
 
 name: Self Hosted Build
 
-run-name: ${{ github.workflow }} for ${{ github.repository }}
+run-name: ${{ github.workflow }} for ${{ github.ref_name && github.ref_name || github.ref }}
 
 # This workflow represents a specific configuration for a
 # single MACHINE as a specific design goal. It utilizes a
@@ -58,7 +58,7 @@ on:
         - cve-check
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow_ref }}
   cancel-in-progress: ${{ !contains(github.ref, 'release/') }}
 
 # workflow permissions for current repository
@@ -103,10 +103,10 @@ permissions:
 
 env:
   REPO_MANIFEST_URL: https://github.com/distro-core/distro-manifest.git
-  REPO_MANIFEST_NAME: distro-head-scarthgap.xml
-  REPO_MANIFEST_REF: main
+  REPO_MANIFEST_NAME: ${{ github.ref_name && format('distro-ref-{0}.xml', github.ref_name) ||'distro-head-scarthgap.xml' }}
+  REPO_MANIFEST_REF: ${{ github.ref_name && github.ref_name || 'main' }}
   REPO_MANIFEST_LOCAL: >-
-    <!-- <extend-project name="meta-distro" revision="main" /> -->
+    <extend-project name="meta-distro" revision="${{ github.ref_name && github.ref_name || 'main' }}" />
     <!-- <extend-project name="workflows-$MACHINE" groups="default"/> -->
     <!-- <extend-project name="meta-tegra" revision="scarthgap-l4t-r35.x" /> -->
   DISTRO: distro-core
@@ -161,6 +161,7 @@ jobs:
     - id: checkout
       uses: actions/checkout@v4
       with:
+        ref: ${{ github.ref_name && github.ref_name || 'main' }}
         clean: false
         fetch-depth: 1
 
@@ -376,18 +377,3 @@ jobs:
     #   run: |
     #     : remove-build-sstate
     #     rm -fr ${{ steps.bitbake-targets.outputs.sstate_dir }}
-
-    # - id: next-workflow
-    #   if: steps.bitbake-targets.conclusion == 'success'
-    #   shell: bash
-    #   env:
-    #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    #   run: |
-    #     : next-step
-    #     gh workflow run --repo ${{ github.repository }} github-hosted-build-2.yml \
-    #       -f runs-on="${{ inputs.runs-on }}" \
-    #       -f flag_dry_run="${{ inputs.flag_dry_run }}" \
-    #       -f flag_continue="${{ inputs.flag_continue }}" \
-    #       -f flag_parse_only="${{ inputs.flag_parse_only }}" \
-    #       -f flag_no_setscene="${{ inputs.flag_no_setscene }}" \
-    #       -f EXTRA_USER_CLASSES="${{ inputs.EXTRA_USER_CLASSES }}"
